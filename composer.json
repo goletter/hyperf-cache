@@ -1,0 +1,44 @@
+{
+    "name": "goletter/hyperf-cache",
+    "description": "Laravel-style cache repository for Hyperf.",
+    "license": "MIT",
+    "type": "library",
+    "keywords": [
+        "php",
+        "hyperf",
+        "cache"
+    ],
+    "authors": [
+        {
+            "name": "goletter",
+            "email": "goletter@outlook.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "hyperf/cache": "~3.1.0 || ~3.2.0",
+        "hyperf/collection": "~3.1.0 || ~3.2.0",
+        "hyperf/context": "~3.1.0 || ~3.2.0",
+        "hyperf/macroable": "~3.1.0 || ~3.2.0",
+        "hyperf/support": "~3.1.0 || ~3.2.0",
+        "hyperf/tappable": "~3.1.0 || ~3.2.0",
+        "nesbot/carbon": "^2.0 || ^3.0"
+    },
+    "suggest": {
+        "friendsofhyperf/lock": "Required to lock stale-while-revalidate refresh (~3.1.0 || ~3.2.0).",
+        "hyperf/coroutine": "Required to defer stale-while-revalidate refresh (~3.1.0 || ~3.2.0)."
+    },
+    "autoload": {
+        "psr-4": {
+            "Goletter\\Cache\\": "src/"
+        },
+        "files": [
+            "src/helpers.php"
+        ]
+    },
+    "extra": {
+        "hyperf": {
+            "config": "Goletter\\Cache\\ConfigProvider"
+        }
+    }
+}
