@@ -5,8 +5,8 @@
 ## 简介
 
 `goletter/hyperf-cache` 使用 Laravel 风格的仓库 API 封装 `hyperf/cache`
-提供的驱动。支持 PSR-16、命名存储、门面、`cache()` 助手函数、缓存事件、宏以及
-stale-while-revalidate。
+提供的驱动。支持 PSR-16、命名存储、门面、`cache()` 助手函数、Redis 分布式锁、
+缓存事件、宏以及 stale-while-revalidate。
 
 命名空间：`Goletter\Cache`。
 
@@ -17,8 +17,15 @@ composer require goletter/hyperf-cache
 ```
 
 要求 Hyperf 3.1 或 3.2。`ConfigProvider` 会注册
-`Goletter\Cache\Contract\Factory` 与
-`Goletter\Cache\Contract\Repository`。
+`Goletter\Cache\Contract\Factory`、
+`Goletter\Cache\Contract\Repository` 与
+`Goletter\Cache\Lock\LockManager`。
+
+使用锁（以及 `flexible()` 刷新互斥）时需安装 Redis：
+
+```shell
+composer require hyperf/redis
+```
 
 ## 配置
 
@@ -128,12 +135,70 @@ $users = Cache::flexible('users', [30, 300], function () {
 ```
 
 未命中时立即执行回调；新鲜期内直接返回；过期后返回旧值并在后台刷新。
-`friendsofhyperf/lock` 与 `hyperf/coroutine` 为可选：无 lock 仍会刷新（无互斥），
-无 `defer` 则同步刷新。
+优先使用包内 Redis 锁做刷新互斥；`friendsofhyperf/lock` 为可选回退。
+无锁仍会刷新（无互斥），无 `defer` 则同步刷新。
 
 ```shell
-composer require friendsofhyperf/lock hyperf/coroutine
+composer require hyperf/redis hyperf/coroutine
 ```
+
+可选锁参数 `seconds` / `owner`；内置锁默认 `seconds = 10`（强制正 TTL，避免死锁）。
+
+### `remember` 防击穿
+
+第 4 个参数传 `true` 或锁选项，缓存填充会串行化：
+
+```php
+$users = Cache::remember('users', 60, function () {
+    return [];
+}, true);
+
+$users = Cache::remember('users', 60, function () {
+    return [];
+}, ['seconds' => 10, 'wait' => 5]);
+```
+
+无 Redis 时忽略锁参数，行为与不加锁的 `remember` 相同。
+
+## 分布式锁
+
+依赖 `hyperf/redis`。API 对齐 Laravel / `friendsofhyperf/lock`：
+
+```php
+use Goletter\Cache\Exception\LockTimeoutException;
+use Goletter\Cache\Facade\Cache;
+use function lock;
+
+$lock = lock('foo', 10);
+if ($lock->get()) {
+    try {
+        // 临界区
+    } finally {
+        $lock->release();
+    }
+}
+
+lock('foo', 10)->get(function () {
+    // 自动释放
+});
+
+try {
+    lock('foo', 10)->block(5, function () {});
+} catch (LockTimeoutException $e) {
+    // 等待超时
+}
+
+Cache::lock('foo', 10)->get(function () {});
+
+// 不等待，拿不到立刻失败（例如挡连点）
+if (! lock($lockKey, 10)->get()) {
+    // 系统繁忙 / 请勿重复操作
+}
+```
+
+锁 key 前缀为 `goletter:cache:lock:`；`release()` 仅在 owner 匹配时删除。
+
+`refresh(?int $ttl = null)` 可续期；`isExpired()` / `getRemainingTime()` 跟踪本地生命周期（`seconds = 0` 表示不过期，建议始终使用正 TTL）。
 
 ## 事件
 

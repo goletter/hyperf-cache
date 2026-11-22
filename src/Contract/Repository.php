@@ -101,14 +101,18 @@ interface Repository extends \Psr\SimpleCache\CacheInterface
     /**
      * Get an item from the cache, or execute the given Closure and store the result.
      *
+     * When $lock is true or an options array, a Redis lock serializes cache fills
+     * to reduce stampede. Options: seconds (hold TTL), wait (block seconds), owner.
+     *
      * @template TCacheValue
      *
      * @param string $key
      * @param null|DateInterval|DateTimeInterface|int $ttl
      * @param (Closure(): TCacheValue) $callback
+     * @param bool|array{ seconds?: int, wait?: int, owner?: string } $lock
      * @return TCacheValue
      */
-    public function remember($key, $ttl, Closure $callback);
+    public function remember($key, $ttl, Closure $callback, bool|array $lock = false);
 
     /**
      * Get an item from the cache, or execute the given Closure and store the result forever.
@@ -117,9 +121,10 @@ interface Repository extends \Psr\SimpleCache\CacheInterface
      *
      * @param string $key
      * @param (Closure(): TCacheValue) $callback
+     * @param bool|array{ seconds?: int, wait?: int, owner?: string } $lock
      * @return TCacheValue
      */
-    public function rememberForever($key, Closure $callback);
+    public function rememberForever($key, Closure $callback, bool|array $lock = false);
 
     /**
      * Get an item from the cache, or execute the given Closure and store the result forever.

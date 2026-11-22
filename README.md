@@ -6,8 +6,8 @@
 
 `goletter/hyperf-cache` wraps the drivers provided by `hyperf/cache` with a
 Laravel-style repository API. It supports PSR-16 operations, named stores,
-facade access, a `cache()` helper, cache events, macros, and
-stale-while-revalidate caching.
+facade access, a `cache()` helper, Redis distributed locks, cache events,
+macros, and stale-while-revalidate caching.
 
 Namespace: `Goletter\Cache`.
 
@@ -18,8 +18,15 @@ composer require goletter/hyperf-cache
 ```
 
 Requires Hyperf 3.1 or 3.2. `ConfigProvider` registers
-`Goletter\Cache\Contract\Factory` and
-`Goletter\Cache\Contract\Repository` in the container.
+`Goletter\Cache\Contract\Factory`,
+`Goletter\Cache\Contract\Repository`, and
+`Goletter\Cache\Lock\LockManager` in the container.
+
+For locks (and `flexible()` mutual exclusion), also install Redis:
+
+```shell
+composer require hyperf/redis
+```
 
 ## Configuration
 
@@ -141,15 +148,83 @@ value is returned. After the fresh period, the stale value is returned and a
 deferred callback attempts to refresh it under a lock. A refresh is skipped if
 another process has already updated the creation timestamp.
 
-`friendsofhyperf/lock` and `hyperf/coroutine` are optional. Without lock, refresh
-still runs (without mutual exclusion). Without `defer`, refresh runs inline.
+Built-in Redis locks (via `hyperf/redis`) are preferred for refresh mutual
+exclusion. `friendsofhyperf/lock` remains an optional fallback. Without either,
+refresh still runs (without mutual exclusion). Without `hyperf/coroutine`
+`defer`, refresh runs inline.
 
 ```shell
-composer require friendsofhyperf/lock hyperf/coroutine
+composer require hyperf/redis hyperf/coroutine
 ```
 
-The optional lock array accepts `seconds` and `owner`; they default to `0` and
-`null`.
+The optional lock array accepts `seconds` and `owner`; `seconds` defaults to
+`10` (a positive TTL is enforced for built-in locks). Prefer a TTL so crashed
+holders cannot deadlock.
+
+### Stampede-safe `remember`
+
+Pass `true` or lock options as the 4th argument to serialize cache fills:
+
+```php
+$users = Cache::remember('users', 60, function () {
+    return [];
+}, true);
+
+$users = Cache::remember('users', 60, function () {
+    return [];
+}, ['seconds' => 10, 'wait' => 5]);
+```
+
+Without Redis, the lock flag is ignored and behavior matches unlocked `remember`.
+
+## Distributed Locks
+
+Requires `hyperf/redis`. API mirrors Laravel / `friendsofhyperf/lock`:
+
+```php
+use Goletter\Cache\Exception\LockTimeoutException;
+use Goletter\Cache\Facade\Cache;
+use function lock;
+
+// Non-blocking
+$lock = lock('foo', 10);
+if ($lock->get()) {
+    try {
+        // critical section
+    } finally {
+        $lock->release();
+    }
+}
+
+// Auto-release with callback
+lock('foo', 10)->get(function () {
+    // ...
+});
+
+// Wait up to 5 seconds
+try {
+    lock('foo', 10)->block(5, function () {
+        // ...
+    });
+} catch (LockTimeoutException $e) {
+    // unable to acquire
+}
+
+// Facade
+Cache::lock('foo', 10)->get(function () {});
+
+// Fail fast (no wait) — e.g. reject duplicate submits
+if (! lock('order:create:'.$userId, 10)->get()) {
+    // busy / duplicate
+}
+```
+
+Lock keys are prefixed with `goletter:cache:lock:`. Owners are random tokens;
+`release()` only deletes when the owner matches.
+
+`refresh(?int $ttl = null)` extends TTL while held. `isExpired()` /
+`getRemainingTime()` track the local lifetime (`seconds = 0` means no expiry —
+prefer a positive TTL).
 
 ## Events
 

@@ -8,7 +8,9 @@ use Closure;
 use DateInterval;
 use DateTimeInterface;
 use Goletter\Cache\CacheManager;
+use Goletter\Cache\Contract\Lock;
 use Goletter\Cache\Contract\Repository;
+use Goletter\Cache\Lock\LockManager;
 use Hyperf\Context\ApplicationContext;
 
 /**
@@ -64,6 +66,16 @@ class Cache
     public static function flexible($key, $ttl, $callback, $lock = null)
     {
         return self::store()->flexible($key, $ttl, $callback, $lock);
+    }
+
+    /**
+     * Get a distributed lock instance.
+     */
+    public static function lock(string $name, int $seconds = 0, ?string $owner = null): Lock
+    {
+        return ApplicationContext::getContainer()
+            ->get(LockManager::class)
+            ->make($name, $seconds, $owner);
     }
 
     public static function flush(): bool
@@ -175,11 +187,12 @@ class Cache
      * @param string $key
      * @param null|DateInterval|DateTimeInterface|int $ttl
      * @param (Closure(): TCacheValue) $callback
+     * @param bool|array{ seconds?: int, wait?: int, owner?: string } $lock
      * @return TCacheValue
      */
-    public static function remember($key, $ttl, Closure $callback)
+    public static function remember($key, $ttl, Closure $callback, bool|array $lock = false)
     {
-        return self::store()->remember($key, $ttl, $callback);
+        return self::store()->remember($key, $ttl, $callback, $lock);
     }
 
     /**
@@ -187,11 +200,12 @@ class Cache
      *
      * @param string $key
      * @param (Closure(): TCacheValue) $callback
+     * @param bool|array{ seconds?: int, wait?: int, owner?: string } $lock
      * @return TCacheValue
      */
-    public static function rememberForever($key, Closure $callback)
+    public static function rememberForever($key, Closure $callback, bool|array $lock = false)
     {
-        return self::store()->rememberForever($key, $callback);
+        return self::store()->rememberForever($key, $callback, $lock);
     }
 
     /**

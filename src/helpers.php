@@ -6,7 +6,9 @@ declare(strict_types=1);
  */
 
 use Goletter\Cache\Contract\Factory;
+use Goletter\Cache\Contract\Lock;
 use Goletter\Cache\Contract\Repository;
+use Goletter\Cache\Lock\LockManager;
 use Hyperf\Context\ApplicationContext;
 
 if (! function_exists('cache')) {
@@ -28,5 +30,24 @@ if (! function_exists('cache')) {
         }
 
         return $repository->get($key, $default);
+    }
+}
+
+if (! function_exists('lock')) {
+    /**
+     * Get a lock instance (or the lock manager when name is omitted).
+     *
+     * @return ($name is '' ? LockManager : Lock)
+     */
+    function lock(string $name = '', int $seconds = 0, ?string $owner = null): LockManager|Lock
+    {
+        /** @var LockManager $manager */
+        $manager = ApplicationContext::getContainer()->get(LockManager::class);
+
+        if ($name === '') {
+            return $manager;
+        }
+
+        return $manager->make($name, $seconds, $owner);
     }
 }

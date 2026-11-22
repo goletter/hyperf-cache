@@ -128,13 +128,7 @@ class Repository implements Contract\Repository
                 ], $ttl[1]);
             };
 
-            if (function_exists('FriendsOfHyperf\\Lock\\lock')) {
-                \FriendsOfHyperf\Lock\lock(
-                    $lockKey,
-                    $lock['seconds'] ?? 0,
-                    $lock['owner'] ?? null,
-                )->get($write);
-
+            if ($this->runWithLock($lockKey, $lock, $write)) {
                 return;
             }
 
@@ -318,7 +312,7 @@ class Repository implements Contract\Repository
         return tap($this->get($key, $default), fn () => $this->forget($key));
     }
 
-    public function remember($key, $ttl, Closure $callback)
+    public function remember($key, $ttl, Closure $callback, bool|array $lock = false)
     {
         $value = $this->get($key);
 
@@ -326,12 +320,26 @@ class Repository implements Contract\Repository
             return $value;
         }
 
-        $this->put($key, $value = $callback(), $ttl);
+        if ($lock === false) {
+            $this->put($key, $value = $callback(), $ttl);
 
-        return $value;
+            return $value;
+        }
+
+        return $this->rememberWithLock($key, $lock, function () use ($key, $ttl, $callback) {
+            $value = $this->get($key);
+
+            if (! is_null($value)) {
+                return $value;
+            }
+
+            $this->put($key, $value = $callback(), $ttl);
+
+            return $value;
+        });
     }
 
-    public function rememberForever($key, Closure $callback)
+    public function rememberForever($key, Closure $callback, bool|array $lock = false)
     {
         $value = $this->get($key);
 
@@ -339,9 +347,23 @@ class Repository implements Contract\Repository
             return $value;
         }
 
-        $this->forever($key, $value = $callback());
+        if ($lock === false) {
+            $this->forever($key, $value = $callback());
 
-        return $value;
+            return $value;
+        }
+
+        return $this->rememberWithLock($key, $lock, function () use ($key, $callback) {
+            $value = $this->get($key);
+
+            if (! is_null($value)) {
+                return $value;
+            }
+
+            $this->forever($key, $value = $callback());
+
+            return $value;
+        });
     }
 
     public function sear($key, Closure $callback)
@@ -390,6 +412,76 @@ class Repository implements Contract\Repository
     protected function getName(): string
     {
         return $this->name;
+    }
+
+    /**
+     * @param  null|array{ seconds?: int, owner?: string }  $lock
+     * @param  callable(): mixed  $callback
+     */
+    protected function runWithLock(string $lockKey, ?array $lock, callable $callback): bool
+    {
+        $seconds = $lock['seconds'] ?? 10;
+        $owner = $lock['owner'] ?? null;
+
+        if ($this->container->has(\Hyperf\Redis\Redis::class)
+            && $this->container->has(Lock\LockManager::class)
+        ) {
+            $this->container->get(Lock\LockManager::class)
+                ->make($lockKey, max(1, $seconds), $owner)
+                ->get($callback);
+
+            return true;
+        }
+
+        if (function_exists('FriendsOfHyperf\\Lock\\lock')) {
+            \FriendsOfHyperf\Lock\lock($lockKey, $seconds, $owner)->get($callback);
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  bool|array{ seconds?: int, wait?: int, owner?: string }  $lock
+     * @param  callable(): mixed  $callback
+     */
+    protected function rememberWithLock(string $key, bool|array $lock, callable $callback): mixed
+    {
+        $options = is_array($lock) ? $lock : [];
+        $seconds = max(1, (int) ($options['seconds'] ?? 10));
+        $wait = max(0, (int) ($options['wait'] ?? $seconds));
+        $owner = $options['owner'] ?? null;
+        $lockKey = 'remember:' . $key;
+
+        if (! $this->container->has(\Hyperf\Redis\Redis::class)
+            || ! $this->container->has(Lock\LockManager::class)
+        ) {
+            return $callback();
+        }
+
+        $lockInstance = $this->container->get(Lock\LockManager::class)
+            ->make($lockKey, $seconds, $owner);
+
+        try {
+            if ($wait > 0) {
+                return $lockInstance->block($wait, $callback);
+            }
+
+            if ($lockInstance->get()) {
+                try {
+                    return $callback();
+                } finally {
+                    $lockInstance->release();
+                }
+            }
+        } catch (Exception\LockTimeoutException) {
+            // Another worker may have filled the cache; fall through.
+        }
+
+        $value = $this->get($key);
+
+        return is_null($value) ? $callback() : $value;
     }
 
     /**
